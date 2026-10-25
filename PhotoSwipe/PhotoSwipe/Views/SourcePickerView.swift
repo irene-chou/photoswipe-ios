@@ -12,6 +12,8 @@ struct SourcePickerView: View {
             VStack(alignment: .leading, spacing: 22) {
                 title
 
+                if vm.canChooseLibraryScope { scopeSwitcher }
+
                 if vm.pendingTrashCount > 0 { pendingTrashBanner }
 
                 if vm.stats.deletedCount > 0 || vm.stats.freedBytes > 0 {
@@ -58,6 +60,49 @@ struct SourcePickerView: View {
                 .foregroundStyle(.white)
         }
         .padding(.top, 4)
+    }
+
+    /// Personal vs. Personal + iCloud Shared Library. Only shown when the
+    /// library actually contains shared assets.
+    private var scopeSwitcher: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("LIBRARY")
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .tracking(1.6)
+                .foregroundStyle(Theme.textDim)
+            HStack(spacing: 6) {
+                scopePill(.personal, count: vm.personalLibraryCount)
+                scopePill(.all, count: vm.personalLibraryCount + vm.sharedLibraryCount)
+            }
+            .padding(4)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Theme.stroke))
+        }
+    }
+
+    private func scopePill(_ scope: LibraryScope, count: Int) -> some View {
+        let selected = vm.libraryScope == scope
+        return Button {
+            Haptics.tap()
+            withAnimation(.press) { vm.setLibraryScope(scope) }
+        } label: {
+            VStack(spacing: 1) {
+                Text(scope.title)
+                    .font(.system(.subheadline, design: .rounded).weight(.bold))
+                    .foregroundStyle(selected ? .white : Theme.textDim)
+                Text("\(count)")
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(selected ? Color.white.opacity(0.75) : Theme.textDim)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(selected ? Theme.album.opacity(0.35) : Color.clear)
+            )
+        }
+        .buttonStyle(PressableStyle(scale: 0.97))
     }
 
     private func tile(_ source: PhotoSource, subtitle: String) -> some View {

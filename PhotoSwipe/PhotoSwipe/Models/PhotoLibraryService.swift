@@ -35,6 +35,41 @@ final class PhotoLibraryService {
         return assets
     }
 
+    /// All image assets split into personal vs iCloud Shared Library. Safe to
+    /// call off the main thread; PHAsset reads are thread-safe.
+    func fetchSnapshot() -> LibrarySnapshot {
+        var snap = LibrarySnapshot()
+        snap.everything = fetchAllPhotos()
+        guard Self.canDetectSharedLibrary else {
+            snap.personal = snap.everything
+            return snap
+        }
+        snap.personal.reserveCapacity(snap.everything.count)
+        for asset in snap.everything {
+            if Self.isInSharedLibrary(asset) { snap.shared.append(asset) } else { snap.personal.append(asset) }
+        }
+        return snap
+    }
+
+    // MARK: iCloud Shared Library detection
+    //
+    // PhotoKit has no public API that says whether an asset belongs to the
+    // iCloud Shared Library (as opposed to a Shared Album, which
+    // `PHAssetSourceType.typeCloudShared` covers). PHAsset does carry a private
+    // boolean for it; we read it via KVC only after confirming the selector
+    // exists, so a future iOS that drops it degrades to "no filtering" instead
+    // of crashing.
+
+    private static let sharedLibraryKey = "clsIsInSharedLibrary"
+
+    static let canDetectSharedLibrary: Bool =
+        PHAsset.instancesRespond(to: NSSelectorFromString(sharedLibraryKey))
+
+    static func isInSharedLibrary(_ asset: PHAsset) -> Bool {
+        guard canDetectSharedLibrary else { return false }
+        return (asset.value(forKey: sharedLibraryKey) as? Bool) ?? false
+    }
+
     // MARK: Image loading
 
     func requestImage(for asset: PHAsset, targetSize: CGSize,

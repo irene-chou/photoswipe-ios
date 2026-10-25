@@ -25,6 +25,13 @@ final class SwipeDeckViewModel: ObservableObject {
     @Published private(set) var facets = LibraryFacets()
     @Published private(set) var source: PhotoSource = .all
 
+    // Library scope (personal vs. personal + iCloud Shared Library)
+    @Published private(set) var libraryScope: LibraryScope = LibraryScope.load()
+    @Published private(set) var sharedLibraryCount = 0
+    @Published private(set) var personalLibraryCount = 0
+    /// Show the scope switcher only when there is something to switch between.
+    var canChooseLibraryScope: Bool { PhotoLibraryService.canDetectSharedLibrary && sharedLibraryCount > 0 }
+
     // Duplicates
     @Published private(set) var duplicateGroups: [DuplicateGroup] = []
     @Published var scanProgress: Double = 0
@@ -44,14 +51,18 @@ final class SwipeDeckViewModel: ObservableObject {
     private let statsStore = StatsStore()
     private let trashStore = PendingTrashStore()
     private lazy var finder = DuplicateFinder(service: service)
-    private var allImages: [PHAsset] = []
+    private var snapshot = LibrarySnapshot()
+    /// Working set for the current `libraryScope`.
+    private var allImages: [PHAsset] { snapshot.images(for: libraryScope) }
 
     // MARK: Derived
 
     /// Everything queued for deletion (this run + any leftover from a paused
     /// session), resolved against the current library.
     var pendingTrash: [PHAsset] {
-        allImages.filter { pendingTrashIDs.contains($0.localIdentifier) }
+        // Resolve against the whole library so items queued under a wider
+        // scope are still deleted after switching to "Personal".
+        snapshot.everything.filter { pendingTrashIDs.contains($0.localIdentifier) }
     }
     var pendingTrashCount: Int { pendingTrashIDs.count }
     var keptCount: Int { history.filter { $0.decision == .keep }.count }
@@ -91,11 +102,26 @@ final class SwipeDeckViewModel: ObservableObject {
         phase = .loading
         stats = statsStore.load()
         pendingTrashIDs = trashStore.ids
-        allImages = service.fetchAllPhotos()
+        await reloadSnapshot()
         albums = service.userAlbums()
-        if allImages.isEmpty { phase = .empty; return }
+        if snapshot.everything.isEmpty { phase = .empty; return }
         facets = computeFacets(allImages)
         phase = .picker
+    }
+
+    /// Re-read the library off the main thread and refresh scope counts.
+    private func reloadSnapshot() async {
+        let snap = await Task.detached { [service] in service.fetchSnapshot() }.value
+        snapshot = snap
+        personalLibraryCount = snap.personal.count
+        sharedLibraryCount = snap.shared.count
+    }
+
+    func setLibraryScope(_ scope: LibraryScope) {
+        guard scope != libraryScope else { return }
+        libraryScope = scope
+        scope.save()
+        facets = computeFacets(allImages)
     }
 
     private func computeFacets(_ images: [PHAsset]) -> LibraryFacets {
@@ -266,7 +292,7 @@ final class SwipeDeckViewModel: ObservableObject {
             trashStore.clear()
             pendingTrashIDs.removeAll()
             history.removeAll { $0.decision == .trash }
-            allImages = service.fetchAllPhotos()
+            await reloadSnapshot()
             Haptics.success()
             if returnToPicker { backToPicker() }
         } catch {
@@ -316,7 +342,7 @@ final class SwipeDeckViewModel: ObservableObject {
             freedBytes = bytes
             estimatedFreeBytes = bytes
             stats = statsStore.record(freed: bytes, deleted: toDelete.count, duplicates: toDelete.count)
-            allImages = service.fetchAllPhotos()
+            await reloadSnapshot()
             duplicateGroups = []
             Haptics.success()
             backToPicker()
